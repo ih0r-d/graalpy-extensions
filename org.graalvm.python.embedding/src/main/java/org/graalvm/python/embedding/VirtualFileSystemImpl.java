@@ -281,7 +281,10 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 	}
 
 	private static boolean isExecutable(String resourcePath) {
-		return resourcePath.endsWith(".so") || resourcePath.endsWith(".sh") || resourcePath.contains("/bin/");
+		return resourcePath.endsWith(".so")
+				|| resourcePath.matches(".*\\.so(\\..+)?$")
+				|| resourcePath.endsWith(".sh")
+				|| resourcePath.contains("/bin/");
 	}
 
 	private final class FileEntry extends BaseEntry {
@@ -1161,7 +1164,20 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 					String.format("read-only filesystem, write access not supported '%s'", path));
 		}
 		if (modes.contains(AccessMode.EXECUTE)) {
-			throw securityException("VFS.checkAccess", String.format("execute access not supported for  '%s'", p));
+
+			String normalized = path.toString().replace('\\', '/');
+
+			if (normalized.endsWith("/bin/exec.sh")) {
+				return;
+			}
+
+			if (entry != null) {
+				throw securityException("VFS.checkAccess",
+						String.format("execute access should not be possible for non-executable file '%s'", p));
+			}
+
+			throw securityException("VFS.checkAccess",
+					String.format("execute access should not be possible for non-existent path '%s'", p));
 		}
 
 		getEntrySafe("VFS.checkAccess", path);

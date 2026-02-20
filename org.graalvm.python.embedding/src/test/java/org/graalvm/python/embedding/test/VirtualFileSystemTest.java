@@ -96,9 +96,9 @@ import org.junit.jupiter.api.function.Executable;
 
 public class VirtualFileSystemTest {
 
-	private static String MOUNT_POINT_NAME = "test_mount_point";
-	static final String VFS_UNIX_MOUNT_POINT = "/test_mount_point";
-	static final String VFS_WIN_MOUNT_POINT = "X:\\test_mount_point";
+	private static final String MOUNT_POINT_NAME = "test_mount_point";
+	static final String VFS_UNIX_MOUNT_POINT = "/" + MOUNT_POINT_NAME;
+	static final String VFS_WIN_MOUNT_POINT = "X:\\" + MOUNT_POINT_NAME;
 	static final String VFS_MOUNT_POINT = IS_WINDOWS ? VFS_WIN_MOUNT_POINT : VFS_UNIX_MOUNT_POINT;
 
 	private static final Path VFS_ROOT_PATH = Path.of(VFS_MOUNT_POINT);
@@ -124,7 +124,7 @@ public class VirtualFileSystemTest {
 		logger.setLevel(Level.FINE);
 	}
 
-	private List<AutoCloseable> toBeClosed = new ArrayList<>();
+	private final List<AutoCloseable> toBeClosed = new ArrayList<>();
 
 	@BeforeEach
 	public void initFS() throws Exception {
@@ -249,23 +249,23 @@ public class VirtualFileSystemTest {
 			// absolute path starting with real FS, pointing to VFS
 			// /real/fs/path/../../../VFS_MOUNT_POINT
 			// XXX return same abs path ???
-			p = Path.of(fromPathToFSRoot(realFSDir).toString(), MOUNT_POINT_NAME);
+			p = Path.of(fromPathToFSRoot(realFSDir), MOUNT_POINT_NAME);
 			assertEquals(p, fs.toAbsolutePath(p));
 			// /real/fs/path/../../../VFS_MOUNT_POINT/../VFS_MOUNT_POINT
-			p = Path.of(fromPathToFSRoot(realFSDir).toString(), MOUNT_POINT_NAME, "..", MOUNT_POINT_NAME);
+			p = Path.of(fromPathToFSRoot(realFSDir), MOUNT_POINT_NAME, "..", MOUNT_POINT_NAME);
 			assertEquals(p, fs.toAbsolutePath(p));
 
 			// no CWD set, so relative path starting in real FS, pointing to VFS
 			// ../../../VFS_ROOT
 			Path cwd = Path.of(".").toAbsolutePath();
 			if (!IS_WINDOWS) {
-				p = fs.toAbsolutePath(Path.of(dotdot(cwd.getNameCount()).toString(), MOUNT_POINT_NAME));
+				p = fs.toAbsolutePath(Path.of(dotdot(cwd.getNameCount()), MOUNT_POINT_NAME));
 				assertTrue(p.isAbsolute());
 				assertEquals(VFS_ROOT_PATH, p.normalize());
 
 				// ../../../VFS_ROOT/../real/fs/path
 				p = fs.toAbsolutePath(
-						Path.of(dotdot(cwd.getNameCount()).toString(), MOUNT_POINT_NAME, "..", realFSPath.toString()));
+						Path.of(dotdot(cwd.getNameCount()), MOUNT_POINT_NAME, "..", realFSPath.toString()));
 				assertTrue(p.isAbsolute());
 				assertEquals(realFSPath, p.normalize());
 
