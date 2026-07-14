@@ -1149,11 +1149,6 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 					String.format("read-only filesystem, write access not supported '%s'", path));
 		}
 		if (modes.contains(AccessMode.EXECUTE)) {
-			if (entry != null) {
-				throw securityException("VFS.checkAccess",
-						String.format("execute access is not supported for virtual filesystem entries '%s'", p));
-			}
-
 			throw securityException("VFS.checkAccess",
 					String.format("execute access is not supported for virtual filesystem entries '%s'", p));
 		}
