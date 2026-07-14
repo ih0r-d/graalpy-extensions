@@ -18,6 +18,9 @@ other than the official GraalPy Maven/Gradle plugins.
 * `VirtualFileSystem` no longer configures its own `java.util.logging.ConsoleHandler`.
 Users should configure the `java.util.logging` framework using standard mechanisms.
 
+* `VirtualFileSystem` preserves explicit POSIX file and directory permissions
+when extracting VFS resources from metadata and `fileslist`.
+
 * GraalPy Maven plugin supports configuration of Python dependencies via
 external `requirements.txt` file as an alternative to specifying those
 dependencies in `pom.xml`. See the [documentation](https://github.com/oracle/graalpython/blob/e41e01aa69144b9d9adf5526cd96ffedc6d502c9/docs/user/Embedding-Build-Tools.md#using-requirementstxt)
