@@ -52,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
 import java.io.IOException;
@@ -75,6 +76,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -820,6 +822,30 @@ public class VirtualFileSystemTest {
 			checkExtractedFile(dep1, null);
 			checkExtractedFile(dep2, null);
 			assertFalse(Files.exists(notExtracted));
+		}
+	}
+
+	@Test
+	void lazyExtractionAppliesExplicitPermissionsToParentDirs() throws Exception {
+		assumeTrue(!IS_WINDOWS, "POSIX permissions are not supported on Windows");
+		assumeTrue(Files.getFileStore(Path.of(".")).supportsFileAttributeView("posix"),
+				"POSIX permissions are not supported on this filesystem");
+
+		try (VirtualFileSystem vfs = VirtualFileSystem.newBuilder().//
+				allowHostIO(READ_WRITE).//
+				unixMountPoint(VFS_UNIX_MOUNT_POINT).//
+				windowsMountPoint(VFS_WIN_MOUNT_POINT).//
+				resourceDirectory("GRAALPY-VFS/reordered-permissions").//
+				extractFilter(p -> p.getFileName() != null && p.getFileName().toString().equals("hello.txt")).//
+				resourceLoadingClass(VirtualFileSystemTest.class).build()) {
+			FileSystem fs = getDelegatingFS(vfs);
+			Path extracted = fs.toRealPath(Path.of(VFS_MOUNT_POINT, "foo", "otherdir", "hello.txt"));
+
+			assertEquals(PosixFilePermissions.fromString("rw-r--r--"), Files.getPosixFilePermissions(extracted));
+			assertEquals(PosixFilePermissions.fromString("rwxr-x---"),
+					Files.getPosixFilePermissions(extracted.getParent()));
+			assertEquals(PosixFilePermissions.fromString("rwx--x--x"),
+					Files.getPosixFilePermissions(extracted.getParent().getParent()));
 		}
 	}
 

@@ -1003,10 +1003,17 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 		assert extractDir != null;
 		try {
 			if (entry instanceof FileEntry fileEntry) {
+				List<Path> extractedRelPaths = new ArrayList<>();
 				for (FileEntry toExtract : fileEntry.toExtract) {
 					extractSingleFile(toExtract);
+					extractedRelPaths.add(getExtractedRelativePath(toExtract));
 				}
-				return extractSingleFile(fileEntry);
+				Path extractedPath = extractSingleFile(fileEntry);
+				extractedRelPaths.add(getExtractedRelativePath(fileEntry));
+				for (Path relPath : extractedRelPaths) {
+					applyPermissionsToExtractedParentDirs(relPath);
+				}
+				return extractedPath;
 			} else {
 				return null;
 			}
@@ -1026,13 +1033,22 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 		}
 	}
 
+	/**
+	 * Returns the path of an extracted file relative to the VFS mount point. The
+	 * resulting path is used both for resolving the extracted filesystem path and
+	 * for looking up VFS metadata.
+	 */
+	private Path getExtractedRelativePath(FileEntry entry) {
+		return mountPoint.relativize(Paths.get(entry.getPlatformPath()));
+	}
+
 	private Path extractSingleFile(FileEntry toExtract) throws IOException {
 		/*
 		 * Remove the mountPoint(X) (e.g. "graalpy_vfs(x)") prefix if given. Method
 		 * 'file' is able to handle relative paths and we need it to compute the extract
 		 * path.
 		 */
-		Path relPath = mountPoint.relativize(Paths.get(toExtract.getPlatformPath()));
+		Path relPath = getExtractedRelativePath(toExtract);
 		// create target path
 		Path extractedPath = extractDir.resolve(relPath);
 		if (!Files.exists(extractedPath)) {
@@ -1044,12 +1060,6 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 			}
 			Files.createDirectories(parent);
 
-			// apply permissions to parent dirs
-			BaseEntry parentEntry = getEntry(parent);
-			if (parentEntry != null) {
-				applyPermissions(parentEntry, parent);
-			}
-
 			// write data extracted file
 			toExtract.extractTo(extractedPath);
 			// apply permissions to extracted file
@@ -1058,6 +1068,24 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 			finest("extracted '%s' -> '%s'", toExtract.getPlatformPath(), extractedPath);
 		}
 		return extractedPath;
+	}
+
+	/**
+	 * Applies explicit permissions from VFS metadata to every extracted parent
+	 * directory of the given VFS-relative file path.
+	 */
+	private void applyPermissionsToExtractedParentDirs(Path relPath) throws IOException {
+		Path normalizedExtractDir = extractDir.normalize();
+		for (Path current = relPath.getParent(); current != null; current = current.getParent()) {
+			Path extractedParent = extractDir.resolve(current).normalize();
+			if (!extractedParent.startsWith(normalizedExtractDir)) {
+				throw new IOException("Refusing to apply permissions outside extraction directory: " + extractedParent);
+			}
+			BaseEntry parentEntry = getEntry(mountPoint.resolve(current));
+			if (parentEntry != null) {
+				applyPermissions(parentEntry, extractedParent);
+			}
+		}
 	}
 
 	void extractResources(Path externalResourceDirectory) throws IOException {
