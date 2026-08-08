@@ -99,12 +99,6 @@ import static org.graalvm.python.embedding.VirtualFileSystem.HostIO.NONE;
 
 final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 
-	private static final Set<PosixFilePermission> DEFAULT_FILE_PERMISSIONS = PosixFilePermissions
-			.fromString("rw-r--r--"); // 0644
-
-	private static final Set<PosixFilePermission> DEFAULT_DIR_PERMISSIONS = PosixFilePermissions
-			.fromString("rwxr-xr-x"); // 0755
-
 	private static final Logger LOGGER = Logger.getLogger(VirtualFileSystem.class.getName());
 
 	private static String resourcePath(String... components) {
@@ -164,7 +158,7 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 	private static final char RESOURCE_SEPARATOR_CHAR = '/';
 	private static final String RESOURCE_SEPARATOR = String.valueOf(RESOURCE_SEPARATOR_CHAR);
 
-	private abstract sealed class BaseEntry permits DirEntry, FileEntry {
+	private abstract sealed class BaseEntry {
 		final String platformPath;
 		private Set<PosixFilePermission> permissions;
 
@@ -249,6 +243,9 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 			}
 			return sb.toString();
 		}
+	}
+
+	private record ExtractedPath(BaseEntry entry, Path path) {
 	}
 
 	private final class FileEntry extends BaseEntry {
@@ -1090,6 +1087,8 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 
 	void extractResources(Path externalResourceDirectory) throws IOException {
 		fine("VFS.extractResources '%s'", externalResourceDirectory);
+		List<ExtractedPath> extractedFiles = new ArrayList<>();
+		List<ExtractedPath> extractedDirs = new ArrayList<>();
 		for (BaseEntry entry : vfsEntries.values()) {
 			String resourcePath = entry.getResourcePath();
 			assert resourcePath.length() >= vfsRoot.length() + 1;
@@ -1099,7 +1098,7 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 			Path destFile = externalResourceDirectory.resolve(Path.of(resourcePath.substring(vfsRoot.length() + 2)));
 			if (entry instanceof DirEntry) {
 				Files.createDirectories(destFile);
-				applyPermissions(entry, destFile);
+				extractedDirs.add(new ExtractedPath(entry, destFile));
 			} else if (entry instanceof FileEntry fileEntry) {
 				Path parent = destFile.getParent();
 				if (parent != null) {
@@ -1107,10 +1106,17 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 				}
 				finest("VFS.extractResources '%s' -> '%s'", resourcePath, destFile);
 				fileEntry.extractTo(destFile);
-				applyPermissions(entry, destFile);
+				extractedFiles.add(new ExtractedPath(entry, destFile));
 			} else {
 				throw new IllegalStateException("Unexpected entry type: " + entry);
 			}
+		}
+		for (ExtractedPath extractedFile : extractedFiles) {
+			applyPermissions(extractedFile.entry(), extractedFile.path());
+		}
+		extractedDirs.sort((left, right) -> Integer.compare(right.path().getNameCount(), left.path().getNameCount()));
+		for (ExtractedPath extractedDir : extractedDirs) {
+			applyPermissions(extractedDir.entry(), extractedDir.path());
 		}
 	}
 

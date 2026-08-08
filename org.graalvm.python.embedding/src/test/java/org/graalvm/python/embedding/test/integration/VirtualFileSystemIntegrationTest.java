@@ -69,6 +69,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -638,14 +639,20 @@ public class VirtualFileSystemIntegrationTest {
 			GraalPyResources.extractVirtualFileSystemResources(fs, resourcesDir);
 		}
 		// check extracted contents
-		for (String line : readFilesListEntries("/org.graalvm.python.vfs/fileslist.txt")) {
+		InputStream stream = VirtualFileSystemIntegrationTest.class
+				.getResourceAsStream("/org.graalvm.python.vfs/fileslist.txt");
+		BufferedReader br = new BufferedReader(new InputStreamReader(stream));
+		String line;
+		while ((line = br.readLine()) != null) {
 			line = line.substring("/org.graalvm.python.vfs/".length());
-			if (line.isEmpty()) {
+			if (line.length() == 0) {
 				continue;
 			}
 			Path extractedFile = resourcesDir.resolve(line);
 			assert Files.exists(extractedFile);
-			assert !line.endsWith("/") || Files.isDirectory(extractedFile);
+			if (line.endsWith("/")) {
+				assert Files.isDirectory(extractedFile);
+			}
 		}
 		checkExtractedFile(resourcesDir.resolve(Path.of("file1")), new String[]{"text1", "text2"});
 
@@ -670,30 +677,25 @@ public class VirtualFileSystemIntegrationTest {
 			GraalPyResources.extractVirtualFileSystemResources(fs, resourcesDir);
 		}
 
-		for (String line : readFilesListEntries("/GRAALPY-VFS/permissions-spectrum/fileslist.txt")) {
-			String relative = line.substring("/GRAALPY-VFS/permissions-spectrum/".length());
-			if (relative.isEmpty()) {
-				continue;
-			}
-			assertTrue(Files.exists(resourcesDir.resolve(relative)));
+		Map<String, String> expectedDirectories = Map.of("public", "r-x------", "private", "rwx------", "exec",
+				"rwxr-xr-x", "shared", "rwxr-x---");
+		Map<String, String> expectedFiles = Map.of("public/readme.txt", "rw-r--r--", "private/secret.txt", "rw-------",
+				"exec/tool.sh", "rwxr-x---", "shared/data.txt", "rw-r-----");
+
+		for (Map.Entry<String, String> expectedDirectory : expectedDirectories.entrySet()) {
+			Path path = resourcesDir.resolve(expectedDirectory.getKey());
+			assertTrue(Files.exists(path));
+			assertTrue(Files.isDirectory(path));
+			assertEquals(PosixFilePermissions.fromString(expectedDirectory.getValue()),
+					Files.getPosixFilePermissions(path));
 		}
 
-		assertEquals(PosixFilePermissions.fromString("rwx--x--x"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("public")));
-		assertEquals(PosixFilePermissions.fromString("rw-r--r--"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("public/readme.txt")));
-		assertEquals(PosixFilePermissions.fromString("rwx------"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("private")));
-		assertEquals(PosixFilePermissions.fromString("rw-------"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("private/secret.txt")));
-		assertEquals(PosixFilePermissions.fromString("rwxr-xr-x"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("exec")));
-		assertEquals(PosixFilePermissions.fromString("rwxr-x---"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("exec/tool.sh")));
-		assertEquals(PosixFilePermissions.fromString("rwxr-x---"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("shared")));
-		assertEquals(PosixFilePermissions.fromString("rw-r-----"),
-				Files.getPosixFilePermissions(resourcesDir.resolve("shared/data.txt")));
+		for (Map.Entry<String, String> expectedFile : expectedFiles.entrySet()) {
+			Path path = resourcesDir.resolve(expectedFile.getKey());
+			assertTrue(Files.exists(path));
+			assertTrue(Files.isRegularFile(path));
+			assertEquals(PosixFilePermissions.fromString(expectedFile.getValue()), Files.getPosixFilePermissions(path));
+		}
 	}
 
 	@Test
@@ -770,39 +772,6 @@ public class VirtualFileSystemIntegrationTest {
 		return builder.engine(Engine.newBuilder("python").option("engine.WarnInterpreterOnly", "false").build());
 	}
 
-	private static List<String> readFilesListEntries(String resourcePath) throws IOException {
-		try (InputStream stream = VirtualFileSystemIntegrationTest.class.getResourceAsStream(resourcePath);
-				BufferedReader br = new BufferedReader(new InputStreamReader(stream))) {
-			List<String> entries = new java.util.ArrayList<>();
-			String line;
-			while ((line = br.readLine()) != null) {
-				String entry = parseFilesListEntry(line);
-				if (entry != null) {
-					entries.add(entry);
-				}
-			}
-			return entries;
-		}
-	}
-
-	private static String parseFilesListEntry(String line) {
-		if (line == null) {
-			return null;
-		}
-		line = line.trim();
-		if (line.isEmpty() || line.startsWith("#")) {
-			return null;
-		}
-		if (line.startsWith("/")) {
-			return line;
-		}
-		String[] parts = line.split("\\s+", 2);
-		if (parts.length != 2) {
-			throw new IllegalArgumentException("Invalid fileslist entry: " + line);
-		}
-		return parts[1];
-	}
-
 	@Test
 	public void testAnotherVfs() throws IOException {
 		try (var vfs = VirtualFileSystem.newBuilder().resourceDirectory("GRAALPY-VFS/foo").build()) {
@@ -825,7 +794,7 @@ public class VirtualFileSystemIntegrationTest {
 	}
 
 	@Test
-	public void testVfsWithoutVenv() throws IOException {
+	void testVfsWithoutVenv() throws IOException {
 		try (var vfs = VirtualFileSystem.newBuilder().resourceDirectory("SIMPLE-VFS").build()) {
 			try (Context ctx = addTestOptions(GraalPyResources.contextBuilder(vfs)).build()) {
 				eval(ctx, """
@@ -844,7 +813,7 @@ public class VirtualFileSystemIntegrationTest {
 	}
 
 	@Test
-	public void extractResourcesUsesExplicitDirectoryPermissionsWhenDirsAreListedLater() throws IOException {
+	void extractResourcesUsesExplicitDirectoryPermissionsWhenDirsAreListedLater() throws IOException {
 		assumeTrue(!IS_WINDOWS, "POSIX permissions are not supported on Windows");
 
 		Path resourcesDir = Files.createTempDirectory("vfs-reordered-permissions");

@@ -1,5 +1,5 @@
 0750 /GRAALPY-VFS/permissions-spectrum/
-0711 /GRAALPY-VFS/permissions-spectrum/public/
+0500 /GRAALPY-VFS/permissions-spectrum/public/
 0644 /GRAALPY-VFS/permissions-spectrum/public/readme.txt
 0700 /GRAALPY-VFS/permissions-spectrum/private/
 0600 /GRAALPY-VFS/permissions-spectrum/private/secret.txt
