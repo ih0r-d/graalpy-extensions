@@ -9,6 +9,7 @@ on:
 env:
   graalvm_distribution: 'graalvm'
   graalvm_version: '25'
+  JAVA_TOOL_OPTIONS: '-Dtruffle.UseFallbackRuntime=true'
 
 jobs:
   # This is done as one single separate step to work around rate limits for the API
@@ -94,7 +95,9 @@ jobs:
         shell: bash
 
       - name: Build project (skip tests)
-        run: mvn --batch-mode -DskipTests -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME verify
+        run: >
+          mvn --batch-mode -V -DskipTests -s settings.xml
+          -Dgradle.java.home="$GRADLE_JAVA_HOME" verify
         shell: bash
 
       - name: Upload build artifacts
