@@ -9,7 +9,7 @@ on:
 env:
   graalvm_distribution: 'graalvm'
   graalvm_version: '25'
-  JAVA_TOOL_OPTIONS: '-Dtruffle.UseFallbackRuntime=true'
+  JAVA_TOOL_OPTIONS: '-Dtruffle.UseFallbackRuntime=true --enable-native-access=ALL-UNNAMED'
 
 jobs:
   # This is done as one single separate step to work around rate limits for the API
@@ -196,7 +196,7 @@ jobs:
       - name: Run integration tests
         id: tests_run
         run: |
-          mvn --batch-mode -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME exec:java@integration-tests -Dintegration.tests.args="${{ matrix.test_name }} ${{ matrix.extra_test_args }} $TEST_FLAGS"
+          mvn --batch-mode -N -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME exec:java@integration-tests -Dintegration.tests.args="${{ matrix.test_name }} ${{ matrix.extra_test_args }} $TEST_FLAGS"
         shell: bash
 
       # /var/folders/sw/**/T/jbang*native-image
