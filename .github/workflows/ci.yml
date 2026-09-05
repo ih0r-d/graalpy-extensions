@@ -7,6 +7,7 @@ on:
     branches: [ main ]
 
 env:
+  graalvm_distribution: 'graalvm'
   graalvm_version: '25'
 
 jobs:
@@ -85,7 +86,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Setup Polyglot Maven bundle
@@ -93,7 +94,7 @@ jobs:
         shell: bash
 
       - name: Build project (skip tests)
-        run: mvn --batch-mode -DskipTests -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME package verify
+        run: mvn --batch-mode -DskipTests -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME verify
         shell: bash
 
       - name: Upload build artifacts
@@ -156,7 +157,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Setup Polyglot Maven bundle
@@ -250,7 +251,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Set GRADLE_JAVA_HOME
