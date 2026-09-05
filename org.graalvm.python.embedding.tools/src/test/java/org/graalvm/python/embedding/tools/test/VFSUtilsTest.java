@@ -58,8 +58,10 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.graalvm.python.embedding.tools.test.EmbeddingTestUtils.createLauncher;
@@ -724,6 +726,32 @@ public class VFSUtilsTest {
 		assertTrue(lines.contains("0755 /org.graalvm.python.vfs/pkg/bin/"));
 		assertTrue(lines.contains("0750 /org.graalvm.python.vfs/pkg/bin/tool.sh"));
 		assertTrue(lines.contains("0640 /org.graalvm.python.vfs/README.txt"));
+	}
+
+	@Test
+	public void generateVFSFilesListDetectsDuplicatePathsWithDifferentPermissions() throws IOException {
+		Path tmpDir = Files.createTempDirectory("generateVFSFilesListDuplicates");
+		deleteDirOnShutdown(tmpDir);
+		assumeTrue(!System.getProperty("os.name").startsWith("Windows"));
+		assumeTrue(Files.getFileStore(tmpDir).supportsFileAttributeView("posix"));
+
+		Path vfsRoot = Files.createDirectory(tmpDir.resolve("vfs"));
+		Path file = Files.writeString(vfsRoot.resolve("file.txt"), "hello\n");
+		Files.setPosixFilePermissions(vfsRoot, PosixFilePermissions.fromString("rwxr-xr-x"));
+		Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+		// Keep the first entry and its position, including for legacy and exact
+		// duplicates.
+		for (String first : List.of("0644 /vfs/file.txt", "/vfs/file.txt", "0755 /vfs/file.txt")) {
+			Set<String> entries = new LinkedHashSet<>(List.of(first));
+			List<String> duplicates = new ArrayList<>();
+			VFSUtils.generateVFSFilesList(tmpDir, vfsRoot, entries, duplicates::add);
+			assertEquals(List.of("/vfs/file.txt"), duplicates);
+			assertEquals(List.of(first, "0755 /vfs/"), new ArrayList<>(entries));
+
+			VFSUtils.generateVFSFilesList(tmpDir, vfsRoot, entries, null);
+			assertEquals(List.of(first, "0755 /vfs/"), new ArrayList<>(entries));
+		}
 	}
 
 	private static boolean callPackageRemoved(List<String> packages, List<String> contents, List<String> installed)

@@ -77,6 +77,8 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -826,7 +828,7 @@ public class VirtualFileSystemTest {
 	}
 
 	@Test
-	void lazyExtractionAppliesExplicitPermissionsToParentDirs() throws Exception {
+	void lazyExtractionAllowsMultipleFilesInReadOnlyParentDirs() throws Exception {
 		assumeTrue(!IS_WINDOWS, "POSIX permissions are not supported on Windows");
 		assumeTrue(Files.getFileStore(Path.of(".")).supportsFileAttributeView("posix"),
 				"POSIX permissions are not supported on this filesystem");
@@ -836,17 +838,96 @@ public class VirtualFileSystemTest {
 				unixMountPoint(VFS_UNIX_MOUNT_POINT).//
 				windowsMountPoint(VFS_WIN_MOUNT_POINT).//
 				resourceDirectory("GRAALPY-VFS/reordered-permissions").//
-				extractFilter(p -> p.getFileName() != null && p.getFileName().toString().equals("hello.txt")).//
+				extractFilter(p -> p.getFileName() != null
+						&& Set.of("hello.txt", "hi.txt").contains(p.getFileName().toString()))
+				.//
 				resourceLoadingClass(VirtualFileSystemTest.class).build()) {
 			FileSystem fs = getDelegatingFS(vfs);
 			Path extracted = fs.toRealPath(Path.of(VFS_MOUNT_POINT, "foo", "otherdir", "hello.txt"));
 
-			assertEquals(PosixFilePermissions.fromString("rw-r--r--"), Files.getPosixFilePermissions(extracted));
-			assertEquals(PosixFilePermissions.fromString("rwxr-x---"),
-					Files.getPosixFilePermissions(extracted.getParent()));
-			assertEquals(PosixFilePermissions.fromString("rwx--x--x"),
-					Files.getPosixFilePermissions(extracted.getParent().getParent()));
+			try {
+				assertEquals(PosixFilePermissions.fromString("rw-r--r--"), Files.getPosixFilePermissions(extracted));
+				assertEquals(PosixFilePermissions.fromString("r-x------"),
+						Files.getPosixFilePermissions(extracted.getParent()));
+				assertEquals(PosixFilePermissions.fromString("r-x------"),
+						Files.getPosixFilePermissions(extracted.getParent().getParent()));
+
+				Path second = fs.toRealPath(Path.of(VFS_MOUNT_POINT, "foo", "otherdir", "hi.txt"));
+				assertTrue(Files.isRegularFile(second));
+				assertEquals("hi\n", Files.readString(second));
+				assertEquals(PosixFilePermissions.fromString("rw-r--r--"), Files.getPosixFilePermissions(second));
+				assertEquals(PosixFilePermissions.fromString("r-x------"),
+						Files.getPosixFilePermissions(second.getParent()));
+				assertEquals(PosixFilePermissions.fromString("r-x------"),
+						Files.getPosixFilePermissions(second.getParent().getParent()));
+			} finally {
+				// Allow VFS close() to remove the extracted test resources.
+				Files.setPosixFilePermissions(extracted.getParent().getParent(),
+						PosixFilePermissions.fromString("rwx------"));
+				Files.setPosixFilePermissions(extracted.getParent(), PosixFilePermissions.fromString("rwx------"));
+			}
 		}
+	}
+
+	@Test
+	void parallelLazyExtractionSerializesReadOnlyParentPermissions() throws Exception {
+		assumeTrue(!IS_WINDOWS, "POSIX permissions are not supported on Windows");
+		try (VirtualFileSystem vfs = VirtualFileSystem.newBuilder().allowHostIO(READ_WRITE)
+				.unixMountPoint(VFS_UNIX_MOUNT_POINT).resourceDirectory("GRAALPY-VFS/reordered-permissions")
+				.extractFilter(p -> Set.of("hello.txt", "hi.txt").contains(p.getFileName().toString()))
+				.resourceLoadingClass(VirtualFileSystemTest.class).build()) {
+			FileSystem fs = getDelegatingFS(vfs);
+			Field implField = vfs.getClass().getDeclaredField("impl");
+			implField.setAccessible(true);
+			Object impl = implField.get(vfs);
+			Field extractDirField = impl.getClass().getDeclaredField("extractDir");
+			extractDirField.setAccessible(true);
+			Path extractDir = (Path) extractDirField.get(impl);
+			assumeTrue(Files.getFileStore(extractDir).supportsFileAttributeView("posix"));
+			Path parent = Files.createDirectories(extractDir.resolve("foo/otherdir"));
+			var readOnly = PosixFilePermissions.fromString("r-x------");
+			Files.setPosixFilePermissions(parent, readOnly);
+			Files.setPosixFilePermissions(parent.getParent(), readOnly);
+			FutureTask<Path> hello = new FutureTask<>(
+					() -> fs.toRealPath(Path.of(VFS_MOUNT_POINT, "foo", "otherdir", "hello.txt")));
+			FutureTask<Path> hi = new FutureTask<>(
+					() -> fs.toRealPath(Path.of(VFS_MOUNT_POINT, "foo", "otherdir", "hi.txt")));
+			Thread first = new Thread(hello, "extract-hello");
+			Thread second = new Thread(hi, "extract-hi");
+			try {
+				// Hold the shared directory lock until both extractions reach it.
+				synchronized (impl) {
+					first.start();
+					second.start();
+					awaitExtractionLock(first);
+					awaitExtractionLock(second);
+					assertFalse(Files.exists(parent.resolve("hello.txt")));
+					assertFalse(Files.exists(parent.resolve("hi.txt")));
+				}
+				assertTrue(Files.isRegularFile(hello.get(10, TimeUnit.SECONDS)));
+				assertEquals("hi\n", Files.readString(hi.get(10, TimeUnit.SECONDS)));
+				assertEquals(readOnly, Files.getPosixFilePermissions(parent));
+				assertEquals(readOnly, Files.getPosixFilePermissions(parent.getParent()));
+			} finally {
+				first.join(10000);
+				second.join(10000);
+				Files.setPosixFilePermissions(parent.getParent(), PosixFilePermissions.fromString("rwx------"));
+				Files.setPosixFilePermissions(parent, PosixFilePermissions.fromString("rwx------"));
+			}
+		}
+	}
+
+	private static void awaitExtractionLock(Thread thread) throws InterruptedException {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+		while (thread.isAlive() && System.nanoTime() < deadline) {
+			StackTraceElement[] stack = thread.getStackTrace();
+			if (thread.getState() == Thread.State.BLOCKED && stack.length > 0
+					&& stack[0].getMethodName().equals("extractSingleFile")) {
+				return;
+			}
+			Thread.sleep(10);
+		}
+		fail("Extraction did not wait for the shared instance lock: " + thread.getName());
 	}
 
 	private static void checkExtractedFile(Path extractedFile, String[] expectedContents) throws IOException {

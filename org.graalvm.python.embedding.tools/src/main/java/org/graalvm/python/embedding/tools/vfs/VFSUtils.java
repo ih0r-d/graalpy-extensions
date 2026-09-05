@@ -227,6 +227,10 @@ public final class VFSUtils {
 		return REPLACE_BACKSLASHES ? path.replace("\\", "/") : path;
 	}
 
+	private static String filesListResourcePath(String entry) {
+		return normalizeResourcePath(entry.replaceFirst("^[0-7]{4}\\s+", ""));
+	}
+
 	public static void generateVFSFilesList(Path resourcesRoot, Path vfs, Set<String> ret,
 			Consumer<String> duplicateHandler) throws IOException {
 		if (!Files.isDirectory(vfs)) {
@@ -241,6 +245,10 @@ public final class VFSUtils {
 			String resRootPath = makeDirPath(resourcesRoot);
 			rootEndIdx = resRootPath.length() - 1;
 		}
+		Set<String> resourcePaths = new HashSet<>();
+		for (String entry : ret) {
+			resourcePaths.add(filesListResourcePath(entry));
+		}
 		try (var s = Files.walk(vfs)) {
 			s.forEach(p -> {
 				if (!shouldPathBeExcluded(p)) {
@@ -253,8 +261,10 @@ public final class VFSUtils {
 					}
 					if (entry != null) {
 						entry = normalizeResourcePath(entry);
-						if (!ret.add(entry) && duplicateHandler != null) {
-							duplicateHandler.accept(entry);
+						if (resourcePaths.add(filesListResourcePath(entry))) {
+							ret.add(entry);
+						} else if (duplicateHandler != null) {
+							duplicateHandler.accept(filesListResourcePath(entry));
 						}
 					}
 				}

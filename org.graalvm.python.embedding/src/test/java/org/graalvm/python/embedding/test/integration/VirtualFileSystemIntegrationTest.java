@@ -825,9 +825,9 @@ public class VirtualFileSystemIntegrationTest {
 			GraalPyResources.extractVirtualFileSystemResources(fs, resourcesDir);
 		}
 
-		assertEquals(PosixFilePermissions.fromString("rwx--x--x"),
+		assertEquals(PosixFilePermissions.fromString("r-x------"),
 				Files.getPosixFilePermissions(resourcesDir.resolve("foo")));
-		assertEquals(PosixFilePermissions.fromString("rwxr-x---"),
+		assertEquals(PosixFilePermissions.fromString("r-x------"),
 				Files.getPosixFilePermissions(resourcesDir.resolve("foo/otherdir")));
 	}
 }

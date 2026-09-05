@@ -1000,17 +1000,10 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 		assert extractDir != null;
 		try {
 			if (entry instanceof FileEntry fileEntry) {
-				List<Path> extractedRelPaths = new ArrayList<>();
 				for (FileEntry toExtract : fileEntry.toExtract) {
 					extractSingleFile(toExtract);
-					extractedRelPaths.add(getExtractedRelativePath(toExtract));
 				}
-				Path extractedPath = extractSingleFile(fileEntry);
-				extractedRelPaths.add(getExtractedRelativePath(fileEntry));
-				for (Path relPath : extractedRelPaths) {
-					applyPermissionsToExtractedParentDirs(relPath);
-				}
-				return extractedPath;
+				return extractSingleFile(fileEntry);
 			} else {
 				return null;
 			}
@@ -1039,7 +1032,9 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 		return mountPoint.relativize(Paths.get(entry.getPlatformPath()));
 	}
 
-	private Path extractSingleFile(FileEntry toExtract) throws IOException {
+	// The instance owns extractDir; sibling files share temporarily writable
+	// parents.
+	private synchronized Path extractSingleFile(FileEntry toExtract) throws IOException {
 		/*
 		 * Remove the mountPoint(X) (e.g. "graalpy_vfs(x)") prefix if given. Method
 		 * 'file' is able to handle relative paths and we need it to compute the extract
@@ -1048,39 +1043,50 @@ final class VirtualFileSystemImpl implements FileSystem, AutoCloseable {
 		Path relPath = getExtractedRelativePath(toExtract);
 		// create target path
 		Path extractedPath = extractDir.resolve(relPath);
-		if (!Files.exists(extractedPath)) {
-			// first create parent dirs
-			Path parent = extractedPath.getParent();
-			assert parent == null || !Files.exists(parent) || Files.isDirectory(parent);
-			if (parent == null) {
-				throw new NullPointerException("Parent is null during extracting path.");
+		List<ExtractedPath> parentDirs = new ArrayList<>();
+		try {
+			prepareExtractedParentDirs(relPath, parentDirs);
+			if (!Files.exists(extractedPath)) {
+				Files.createDirectories(extractedPath.getParent());
+				toExtract.extractTo(extractedPath);
+				applyPermissions(toExtract, extractedPath);
+				finest("extracted '%s' -> '%s'", toExtract.getPlatformPath(), extractedPath);
 			}
-			Files.createDirectories(parent);
-
-			// write data extracted file
-			toExtract.extractTo(extractedPath);
-			// apply permissions to extracted file
-			applyPermissions(toExtract, extractedPath);
-
-			finest("extracted '%s' -> '%s'", toExtract.getPlatformPath(), extractedPath);
+			return extractedPath;
+		} finally {
+			// Restore children before parents, including when preparation or extraction
+			// fails.
+			for (int i = parentDirs.size() - 1; i >= 0; i--) {
+				ExtractedPath parent = parentDirs.get(i);
+				applyPermissions(parent.entry(), parent.path());
+			}
 		}
-		return extractedPath;
 	}
 
-	/**
-	 * Applies explicit permissions from VFS metadata to every extracted parent
-	 * directory of the given VFS-relative file path.
-	 */
-	private void applyPermissionsToExtractedParentDirs(Path relPath) throws IOException {
-		Path normalizedExtractDir = extractDir.normalize();
+	private void prepareExtractedParentDirs(Path relPath, List<ExtractedPath> parentDirs) throws IOException {
+		if (isWindows()) {
+			return;
+		}
+		List<Path> parents = new ArrayList<>();
 		for (Path current = relPath.getParent(); current != null; current = current.getParent()) {
+			parents.add(current);
+		}
+		Collections.reverse(parents);
+		for (Path current : parents) {
 			Path extractedParent = extractDir.resolve(current).normalize();
-			if (!extractedParent.startsWith(normalizedExtractDir)) {
+			if (!extractedParent.startsWith(extractDir.normalize())) {
 				throw new IOException("Refusing to apply permissions outside extraction directory: " + extractedParent);
 			}
+			// Make ancestors traversable before accessing their children.
+			Files.createDirectories(extractedParent);
 			BaseEntry parentEntry = getEntry(mountPoint.resolve(current));
-			if (parentEntry != null) {
-				applyPermissions(parentEntry, extractedParent);
+			if (parentEntry != null && parentEntry.getPermissions() != null
+					&& Files.getFileStore(extractedParent).supportsFileAttributeView("posix")) {
+				parentDirs.add(new ExtractedPath(parentEntry, extractedParent));
+				Set<PosixFilePermission> permissions = new HashSet<>(Files.getPosixFilePermissions(extractedParent));
+				permissions.add(PosixFilePermission.OWNER_WRITE);
+				permissions.add(PosixFilePermission.OWNER_EXECUTE);
+				Files.setPosixFilePermissions(extractedParent, permissions);
 			}
 		}
 	}
