@@ -7,7 +7,9 @@ on:
     branches: [ main ]
 
 env:
+  graalvm_distribution: 'graalvm'
   graalvm_version: '25'
+  JAVA_TOOL_OPTIONS: '-Dtruffle.UseFallbackRuntime=true --enable-native-access=ALL-UNNAMED'
 
 jobs:
   # This is done as one single separate step to work around rate limits for the API
@@ -85,7 +87,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Setup Polyglot Maven bundle
@@ -93,7 +95,9 @@ jobs:
         shell: bash
 
       - name: Build project (skip tests)
-        run: mvn --batch-mode -DskipTests -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME package verify
+        run: >
+          mvn --batch-mode -V -DskipTests -s settings.xml
+          -Dgradle.java.home="$GRADLE_JAVA_HOME" verify
         shell: bash
 
       - name: Upload build artifacts
@@ -156,7 +160,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Setup Polyglot Maven bundle
@@ -192,7 +196,7 @@ jobs:
       - name: Run integration tests
         id: tests_run
         run: |
-          mvn --batch-mode -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME exec:java@integration-tests -Dintegration.tests.args="${{ matrix.test_name }} ${{ matrix.extra_test_args }} $TEST_FLAGS"
+          mvn --batch-mode -N -s settings.xml -Dgradle.java.home=$GRADLE_JAVA_HOME exec:java@integration-tests -Dintegration.tests.args="${{ matrix.test_name }} ${{ matrix.extra_test_args }} $TEST_FLAGS"
         shell: bash
 
       # /var/folders/sw/**/T/jbang*native-image
@@ -250,7 +254,7 @@ jobs:
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'graalvm'
+          distribution: ${{ env.graalvm_distribution }}
           java-version: ${{ env.graalvm_version }}
 
       - name: Set GRADLE_JAVA_HOME
